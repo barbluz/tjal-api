@@ -1,0 +1,22 @@
+[[source]]
+url = "https://pypi.python.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+asyncio = "*"
+aiohttp = "*"
+parsel = "*"
+dataclasses = "*"
+typing = "*"
+flask = "*"
+requests = "*"
+flask-sqlalchemy = "*"
+flask-marshmallow = "*"
+marshmallow-sqlalchemy = "*"
+flask-migrate = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.7"
