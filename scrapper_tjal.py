@@ -30,6 +30,14 @@ def get_dados_processo(selector):
     valor = sel.xpath(".//td[1][*[contains(text(), 'Valor da ação:')]]/following-sibling::td//span/text()").extract_first()
     area = sel.xpath(".//td[*[contains(text(), 'Área:')]]/text()[last()]").extract_first()
 
+    classe = re.sub("\s\s+", "", classe)
+    assunto = re.sub("\s\s+", "", assunto)
+    juiz = re.sub("\s\s+", "", juiz)
+    valor = re.sub("[R$|\s]*", "", valor)
+    area = re.sub("\s\s+", "", area)
+
+    return classe, assunto, juiz, valor, area
+
 def get_partes(selector):
     partes = []
     for tr in selector.xpath('//*[@id="tablePartesPrincipais"]/tr'):
@@ -78,12 +86,11 @@ async def busca_processo(numero_unico):
             text = re.sub("[\t\r\n]", "", text)
             selector = Selector(text)
 
-            numero_unico, classe, area, assunto, distribuicao, juiz, valor = get_dados_processo(selector)
             movimentacoes = get_movimentacoes(selector)
             partes = get_partes(selector)
-            # dados_processo = get_dados_processo(selector)
+            dados_processo = get_dados_processo(selector)
+            classe, area, assunto, juiz, valor = get_dados_processo(selector)
 
-            p = Processo(numero_unico, classe, area, assunto, distribuicao, juiz, valor)
-            print(p)
-            return p
+            p = Processo(numero_unico, classe, area, assunto, juiz, valor)
+            return p, partes, movimentacoes
 
