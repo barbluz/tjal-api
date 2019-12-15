@@ -3,7 +3,7 @@ from flask import jsonify
 import os
 from models import *
 from app import *
-from scrapper_tjal import busca_processo
+from scraper_tjal import busca_processo
 import asyncio
 
 processo_schema = ProcessoSchema()
