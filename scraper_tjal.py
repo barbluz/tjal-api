@@ -1,27 +1,54 @@
-import aiohttp
-from parsel import Selector
 import re
-from models import *
+import requests
+from parsel import Selector
 
-def get_movimentacoes(selector):
-    movimentacoes = []
-    for tr in selector.xpath('//*[@id="tabelaTodasMovimentacoes"]/tr'):
-        data = tr.xpath('./td[1]/text()').extract_first()
+from app import db
+from models import Movimentacao, Processo, Parte, Representante
 
-        titulo = tr.xpath('./td[3]//text()').extract_first()
-        if titulo is not None:
-            titulo = titulo.strip()
+def get_movimentacoes(selector: Selector, processo: Processo, action: str):
+    if action == 'update':
+        movimentacoes = Movimentacao.query.filter_by(processo_id=processo.id).all()
 
-        link = tr.xpath('./td[3]//@href').extract_first()
+        for tr in selector.xpath('//*[@id="tabelaTodasMovimentacoes"]/tr'):
+            data = tr.xpath('./td[1]/text()').extract_first()
 
-        conteudo = tr.xpath('./td[3]/span/text()').extract_first()
-        if conteudo is not None:
-            conteudo = conteudo.strip()
+            titulo = tr.xpath('./td[3]//text()').extract_first()
+            if titulo is not None:
+                titulo = titulo.strip()
 
-        movimentacoes.append(Movimentacao(titulo, data, conteudo, link))
+            url = tr.xpath('./td[3]//@href').extract_first()
+
+            conteudo = tr.xpath('./td[3]/span/text()').extract_first()
+            if conteudo is not None:
+                conteudo = conteudo.strip()
+
+        m = Movimentacao(titulo=titulo, data=data, conteudo=conteudo, url=url, processo=processo)
+        if m not in movimentacoes:
+            movimentacoes.append(m)
+    else:
+        movimentacoes = []
+        for tr in selector.xpath('//*[@id="tabelaTodasMovimentacoes"]/tr'):
+            data = tr.xpath('./td[1]/text()').extract_first()
+
+            titulo = tr.xpath('./td[3]//text()').extract_first()
+            if titulo is not None:
+                titulo = titulo.strip()
+
+            url = tr.xpath('./td[3]//@href').extract_first()
+
+            conteudo = tr.xpath('./td[3]/span/text()').extract_first()
+            if conteudo is not None:
+                conteudo = conteudo.strip()
+
+            m = Movimentacao(titulo=titulo, data=data, conteudo=conteudo, url=url, processo=processo)
+            db.session.add(m)
+            db.session.commit()
+
+            movimentacoes.append(m)
     return movimentacoes
 
-def get_dados_processo(selector):
+
+def get_dados_processo(selector: Selector, numero_unico: str):
     sel = selector.xpath('//*[@class="secaoFormBody" and @id=""]//tr[@class="" and td[1][text()]]')
 
     classe = sel.xpath(".//td[1][*[contains(text(), 'Classe:')]]/following-sibling::td//span/text()").extract_first()
@@ -29,68 +56,105 @@ def get_dados_processo(selector):
     juiz = sel.xpath(".//td[1][*[contains(text(), 'Juiz:')]]/following-sibling::td//span/text()").extract_first()
     valor = sel.xpath(".//td[1][*[contains(text(), 'Valor da ação:')]]/following-sibling::td//span/text()").extract_first()
     area = sel.xpath(".//td[*[contains(text(), 'Área:')]]/text()[last()]").extract_first()
+    distribuicao = sel.xpath(".//td[1][*[contains(text(), 'Distribuição:')]]/following-sibling::td//span/text()").extract_first()
 
     classe = re.sub("\s\s+", "", classe)
     assunto = re.sub("\s\s+", "", assunto)
     juiz = re.sub("\s\s+", "", juiz)
-    valor = re.sub("[R$|\s]*", "", valor)
+
+    valor = re.sub("[R$]", "", valor)
+    valor = re.sub("\s*", "", valor)
+    valor = re.sub("\.", "", valor)
+    valor = re.sub("\,", ".", valor)
+    valor = float(valor)
+
     area = re.sub("\s\s+", "", area)
+    distribuicao = re.sub("\s\s+", "", distribuicao)
 
-    return classe, assunto, juiz, valor, area
+    processo = Processo(numero_unico=numero_unico, classe=classe, area=area, assunto=assunto, distribuicao=distribuicao,
+                        juiz=juiz, valor=valor)
+    return processo
 
-def get_partes(selector):
-    partes = []
-    for tr in selector.xpath('//*[@id="tablePartesPrincipais"]/tr'):
-        titulo = re.sub("[(:|\s)]+", "", tr.xpath('./td[1]/span/text()').extract_first() )
-        p = tr.xpath('./td[2]/text()').extract()
-        nome = p[0]
 
-        p = p[1:]
-        representacao = tr.xpath('./td[2]/span/text()').extract()
+def get_partes(selector: Selector, processo: Processo, action: str):
+    if action == 'update':
+        partes = Parte.query.filter_by(processo_id = processo.id).all()
 
-        representantes = []
-        for i,rep in enumerate(p):
-            tipo = re.sub("[(:|\s)]+", "", representacao[i])
-            representantes.append(Representante(tipo, rep))
-        partes.append(Parte(titulo, nome, representantes))
-    return partes
+        for parte in partes:
+            for tr in selector.xpath('//*[@id="tablePartesPrincipais"]/tr'):
+                titulo = re.sub("[(:|\s)]+", "", tr.xpath('./td[1]/span/text()').extract_first() )
+                p = tr.xpath('./td[2]/text()').extract()
+                nome = p[0]
 
-async def busca_processo(numero_unico):
-    base_url = "https://www2.tjal.jus.br/"
+                p = p[1:]
+                representacao = tr.xpath('./td[2]/span/text()').extract()
 
-    async with aiohttp.ClientSession() as session:
-        url = base_url + "cpopg/open.do"
-        async with session.get(url) as response:
-            text = await response.text()
-            # print(text)
+                parte.tipo = titulo
+                parte.nome = nome
 
-        url = base_url + "cpopg/search.do"
-        params = {
-                "conversationId": "",
-                "dadosConsulta.localPesquisa.cdLocal": "-1",
-                "cbPesquisa": "NUMPROC",
-                "dadosConsulta.tipoNuProcesso": "UNIFICADO",
-                "numeroDigitoAnoUnificado": numero_unico[:13],
-                "foroNumeroUnificado": numero_unico[-4:],
-                "dadosConsulta.valorConsultaNuUnificado": numero_unico,
-                "dadosConsulta.valorConsulta": "",
-                "uuidCaptcha": ""
-                }
+                representantes = Representante.query.filter_by(parte_id = parte.id).all()
+                for representante in representantes:
+                    for i,rep in enumerate(p):
+                        tipo = re.sub("[(:|\s)]+", "", representacao[i])
 
-        async with session.get(url, params=params) as response:
-            print(response.status)
-            print(response.url)
-            text = await response.text()
+                        representante.tipo = tipo
+                        representante.nome = nome
 
-            # removes whitespaces
-            text = re.sub("[\t\r\n]", "", text)
-            selector = Selector(text)
+    else:
+        partes = []
+        for tr in selector.xpath('//*[@id="tablePartesPrincipais"]/tr'):
+            titulo = re.sub("[(:|\s)]+", "", tr.xpath('./td[1]/span/text()').extract_first() )
+            p = tr.xpath('./td[2]/text()').extract()
+            nome = p[0]
 
-            movimentacoes = get_movimentacoes(selector)
-            partes = get_partes(selector)
-            dados_processo = get_dados_processo(selector)
-            classe, area, assunto, juiz, valor = get_dados_processo(selector)
+            p = p[1:]
+            representacao = tr.xpath('./td[2]/span/text()').extract()
 
-            p = Processo(numero_unico, classe, area, assunto, juiz, valor)
-            return p, partes, movimentacoes
+            pt = Parte(tipo=titulo, nome=nome, processo=processo)
+            if action == "update":
+                db.session.merge(pt)
+            else:
+                db.session.add(pt)
+            db.session.commit()
 
+            representantes = []
+            for i,rep in enumerate(p):
+                tipo = re.sub("[(:|\s)]+", "", representacao[i])
+
+                r = Representante(tipo=tipo, nome=rep, parte=pt)
+                db.session.add(r)
+                db.session.commit()
+
+                representantes.append(r)
+            partes.append(pt)
+
+    return partes, representantes
+
+
+def busca_processo(numero_unico: str) -> Selector:
+    url = 'https://www2.tjal.jus.br/cpopg/search.do'
+    params = {
+        "conversationId": "",
+        "dadosConsulta.localPesquisa.cdLocal": "-1",
+        "cbPesquisa": "NUMPROC",
+        "dadosConsulta.tipoNuProcesso": "UNIFICADO",
+        "numeroDigitoAnoUnificado": numero_unico[:13],
+        "foroNumeroUnificado": numero_unico[-4:],
+        "dadosConsulta.valorConsultaNuUnificado": numero_unico,
+        "dadosConsulta.valorConsulta": "",
+        "uuidCaptcha": ""
+        }
+
+    response = requests.get(url, params=params)
+    text = response.text
+
+    # removes whitespaces
+    text = re.sub("[\t\r\n]", "", text)
+    selector = Selector(text)
+
+    return selector
+
+def valid(selector):
+    s = selector.xpath("//*[@id='mensagemRetorno']//*[contains(text(), 'Não existem informações disponíveis para os parâmetros informados.')]")
+    
+    return not s.extract()
